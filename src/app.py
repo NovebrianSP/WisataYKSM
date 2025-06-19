@@ -10,8 +10,8 @@ from sklearn.metrics.pairwise import linear_kernel
 # Load data
 BASE_DIR = os.path.dirname(__file__)
 DATA_PATH = os.path.join(BASE_DIR, "data/destinasi-wisata-YKSM.csv")
-TFIDF_PATH = os.path.join(BASE_DIR, "content_based_tfidf.pkl")
-MATRIX_PATH = os.path.join(BASE_DIR, "content_based_matrix.pkl")
+TFIDF_PATH = os.path.join(BASE_DIR, "data/content_based_tfidf.pkl")
+MATRIX_PATH = os.path.join(BASE_DIR, "data/content_based_matrix.pkl")
 csv_path = os.path.join(os.path.dirname(__file__), "data/destinasi-wisata-YKSM.csv")
 df = pd.read_csv(csv_path)
 

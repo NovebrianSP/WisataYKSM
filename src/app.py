@@ -108,7 +108,7 @@ if page == "Dashboard":
                     tooltip=row["Place_Name"],
                     icon=folium.Icon(color="blue" if row["Outdoor/Indoor"] == "Outdoor" else "green")
                 ).add_to(m)
-            st_folium(m, width=900, height=500)
+            st_folium(m, use_container_width=True, height=500)
     else:
         st.info("Tidak ada data untuk ditampilkan pada peta.")
 

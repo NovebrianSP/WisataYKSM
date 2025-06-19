@@ -8,6 +8,10 @@ import pickle
 from sklearn.metrics.pairwise import linear_kernel
 
 # Load data
+BASE_DIR = os.path.dirname(__file__)
+DATA_PATH = os.path.join(BASE_DIR, "data/destinasi-wisata-YKSM.csv")
+TFIDF_PATH = os.path.join(BASE_DIR, "content_based_tfidf.pkl")
+MATRIX_PATH = os.path.join(BASE_DIR, "content_based_matrix.pkl")
 csv_path = os.path.join(os.path.dirname(__file__), "data/destinasi-wisata-YKSM.csv")
 df = pd.read_csv(csv_path)
 
@@ -118,10 +122,10 @@ if page == "Dashboard":
 
     @st.cache_resource
     def load_content_based():
-        df = pd.read_csv("data/destinasi-wisata-YKSM.csv")
-        with open("content_based_tfidf.pkl", "rb") as f:
+        df = pd.read_csv(DATA_PATH)
+        with open(TFIDF_PATH, "rb") as f:
             tfidf = pickle.load(f)
-        with open("content_based_matrix.pkl", "rb") as f:
+        with open(MATRIX_PATH, "rb") as f:
             tfidf_matrix = pickle.load(f)
         return df, tfidf, tfidf_matrix
 
@@ -159,23 +163,22 @@ if page == "Dashboard":
         )
         return content_recs[:top_n]
 
-    # --- Halaman Hybrid Recommendation ---
-    if page == "Rekomendasi":
-        st.title("Rekomendasi Destinasi Wisata (Hybrid Filtering)")
-        st.write("Pilih destinasi yang Anda sukai, lalu dapatkan rekomendasi destinasi serupa dan populer:")
+    # --- Halaman Rekomendasi Hybrid ---
+    st.title("Rekomendasi Destinasi Wisata (Hybrid Filtering)")
+    st.write("Pilih destinasi yang Anda sukai, lalu dapatkan rekomendasi destinasi serupa dan populer:")
 
-        place_options = df_cb["Place_Name"].sort_values().unique()
-        selected_place = st.selectbox("Pilih Destinasi", place_options)
+    place_options = df_cb["Place_Name"].sort_values().unique()
+    selected_place = st.selectbox("Pilih Destinasi", place_options)
 
-        if selected_place:
-            rekomendasi = get_hybrid_recommendations(selected_place, top_n=5)
-            if rekomendasi:
-                st.markdown(f"#### Rekomendasi mirip dan populer dengan **{selected_place}**:")
-                for rec in rekomendasi:
-                    st.markdown(f"**{rec['Place_Name']}**")
-                    st.write(f"Kategori: {rec['Category']}, Kota: {rec['City']}, Rating: {rec['Rating']} ({rec.get('Rating_Count', 0)} ulasan), Harga: Rp{rec['Price']:,.0f}")
-                    st.write(rec['Description'])
-                    st.write(f"Skor kemiripan: {rec['Score']:.3f}")
-                    st.markdown("---")
-            else:
-                st.info("Tidak ditemukan rekomendasi serupa.")
+    if selected_place:
+        rekomendasi = get_hybrid_recommendations(selected_place, top_n=5)
+        if rekomendasi:
+            st.markdown(f"#### Rekomendasi mirip dan populer dengan **{selected_place}**:")
+            for rec in rekomendasi:
+                st.markdown(f"**{rec['Place_Name']}**")
+                st.write(f"Kategori: {rec['Category']}, Kota: {rec['City']}, Rating: {rec['Rating']} ({rec.get('Rating_Count', 0)} ulasan), Harga: Rp{rec['Price']:,.0f}")
+                st.write(rec['Description'])
+                st.write(f"Skor kemiripan: {rec['Score']:.3f}")
+                st.markdown("---")
+        else:
+            st.info("Tidak ditemukan rekomendasi serupa.")

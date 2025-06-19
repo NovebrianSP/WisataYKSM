@@ -4,6 +4,8 @@ import plotly.express as px
 import folium
 from streamlit_folium import st_folium
 import os
+import pickle
+from sklearn.metrics.pairwise import linear_kernel
 
 # Load data
 csv_path = os.path.join(os.path.dirname(__file__), "data/destinasi-wisata-YKSM.csv")
@@ -113,16 +115,55 @@ if page == "Dashboard":
     else:
         st.info("Tidak ada data untuk ditampilkan pada peta.")
 
-elif page == "Rekomendasi":
-    st.title("Rekomendasi Destinasi Wisata")
-    st.markdown("Berikut adalah 5 destinasi wisata dengan rating tertinggi:")
 
-    rekomendasi = df.sort_values(by=["Rating", "Rating_Count"], ascending=[False, False]).head(5)
-    for i, row in rekomendasi.iterrows():
-        st.markdown(f"### {row['Place_Name']}")
-        st.write(f"**Kategori:** {row['Category']}")
-        st.write(f"**Kota:** {row['City']}")
-        st.write(f"**Rating:** {row['Rating']} ({row['Rating_Count']} ulasan)")
-        st.write(f"**Harga Tiket:** Rp{row['Price']:,.0f}")
-        st.write(row['Description'])
-        st.markdown("---")
+    @st.cache_resource
+    def load_content_based():
+        df = pd.read_csv("data/destinasi-wisata-YKSM.csv")
+        with open("content_based_tfidf.pkl", "rb") as f:
+            tfidf = pickle.load(f)
+        with open("content_based_matrix.pkl", "rb") as f:
+            tfidf_matrix = pickle.load(f)
+        return df, tfidf, tfidf_matrix
+
+    df_cb, tfidf, tfidf_matrix = load_content_based()
+
+    def get_recommendations(place_name, top_n=5):
+        idx = df_cb[df_cb['Place_Name'].str.lower() == place_name.lower()].index
+        if len(idx) == 0:
+            return []
+        idx = idx[0]
+        cosine_similarities = linear_kernel(tfidf_matrix[idx:idx+1], tfidf_matrix).flatten()
+        related_docs_indices = cosine_similarities.argsort()[-top_n-1:-1][::-1]
+        results = []
+        for i in related_docs_indices:
+            results.append({
+                "Place_Name": df_cb.iloc[i]["Place_Name"],
+                "Category": df_cb.iloc[i]["Category"],
+                "City": df_cb.iloc[i]["City"],
+                "Rating": df_cb.iloc[i]["Rating"],
+                "Price": df_cb.iloc[i]["Price"],
+                "Description": df_cb.iloc[i]["Description"],
+                "Score": cosine_similarities[i]
+            })
+        return results
+
+    # --- Halaman Rekomendasi Content-Based ---
+    if page == "Rekomendasi":
+        st.title("Rekomendasi Destinasi Wisata (Content-Based)")
+        st.write("Pilih destinasi yang Anda sukai, lalu dapatkan rekomendasi destinasi serupa:")
+
+        place_options = df_cb["Place_Name"].sort_values().unique()
+        selected_place = st.selectbox("Pilih Destinasi", place_options)
+
+        if selected_place:
+            rekomendasi = get_recommendations(selected_place, top_n=5)
+            if rekomendasi:
+                st.markdown(f"#### Rekomendasi mirip dengan **{selected_place}**:")
+                for rec in rekomendasi:
+                    st.markdown(f"**{rec['Place_Name']}**")
+                    st.write(f"Kategori: {rec['Category']}, Kota: {rec['City']}, Rating: {rec['Rating']}, Harga: Rp{rec['Price']:,.0f}")
+                    st.write(rec['Description'])
+                    st.write(f"Skor kemiripan: {rec['Score']:.3f}")
+                    st.markdown("---")
+            else:
+                st.info("Tidak ditemukan rekomendasi serupa.")

@@ -3,17 +3,14 @@ import pandas as pd
 # Baca data
 df = pd.read_csv('destinasi-wisata-indonesia.csv')
 
+# Hapus kolom yang tidak diperlukan
+df = df.drop(columns=["Time_Minutes", "Column1", "_1"], errors="ignore")
+
 # Filter hanya destinasi di Semarang dan Yogyakarta saja
 selected_cities = ['Semarang', 'Yogyakarta']
 
 df_selected = df[df['City'].str.strip().isin(selected_cities)].copy()
 
-# Hapus kolom yang tidak diperlukan
-df = df.drop(columns=["Time_Minutes", "Column1", "_1"], errors="ignore")
-
-# Ubah Place_Id menjadi index mulai dari 0
-df = df.reset_index(drop=True)
-df["Place_Id"] = df.index
 
 # Tambahkan kolom Outdoor/Indoor
 def get_outdoor_indoor(row):

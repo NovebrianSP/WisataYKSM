@@ -3,10 +3,11 @@ import pandas as pd
 import plotly.express as px
 import folium
 from streamlit_folium import st_folium
+import os
 
 # Load data
-DATA_PATH = "data/destinasi-wisata-YKSM.csv"
-df = pd.read_csv(DATA_PATH)
+csv_path = os.path.join(os.path.dirname(__file__), "data/destinasi-wisata-YKSM.csv")
+df = pd.read_csv(csv_path)
 
 # Pastikan kolom numerik
 df["Lat"] = pd.to_numeric(df["Lat"], errors="coerce")

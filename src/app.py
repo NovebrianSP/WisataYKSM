@@ -118,7 +118,7 @@ if page == "Dashboard":
 
     @st.cache_resource
     def load_content_based():
-        df = pd.read_csv("data/destinasi-wisata-YKSM.csv")
+        df = pd.read_csv(csv_path)
         with open("content_based_tfidf.pkl", "rb") as f:
             tfidf = pickle.load(f)
         with open("content_based_matrix.pkl", "rb") as f:

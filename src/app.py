@@ -4,6 +4,7 @@ import plotly.express as px
 import folium
 from streamlit_folium import st_folium
 import os
+import numpy as np
 
 # Load data
 csv_path = os.path.join(os.path.dirname(__file__), "data/destinasi-wisata-YKSM.csv")
@@ -49,10 +50,27 @@ st.plotly_chart(fig_price, use_container_width=True)
 
 # Map Interaktif
 st.markdown("## Peta Persebaran Destinasi Wisata")
+filtered_df = filtered_df.copy()
 
+# Pastikan Lat dan Long bertipe numerik
+filtered_df["Lat"] = pd.to_numeric(filtered_df["Lat"], errors="coerce")
+filtered_df["Long"] = pd.to_numeric(filtered_df["Long"], errors="coerce")
+
+# Drop baris yang Lat/Long kosong atau 0
+filtered_df = filtered_df.dropna(subset=["Lat", "Long"])
+filtered_df = filtered_df[(filtered_df["Lat"] != 0) & (filtered_df["Long"] != 0)]
+
+# Konversi ke desimal
 filtered_df["lat_decimal"] = filtered_df["Lat"] / 1e7
 filtered_df["long_decimal"] = filtered_df["Long"] / 1e7
 
+# Drop baris jika hasil konversi di luar Indonesia
+filtered_df = filtered_df[
+    (filtered_df["lat_decimal"] > -10) & (filtered_df["lat_decimal"] < 0) &
+    (filtered_df["long_decimal"] > 100) & (filtered_df["long_decimal"] < 120)
+]
+
+# Pusat peta di rata-rata koordinat
 m = folium.Map(
     location=[filtered_df["lat_decimal"].mean(), filtered_df["long_decimal"].mean()],
     zoom_start=11

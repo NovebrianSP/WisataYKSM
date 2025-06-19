@@ -34,7 +34,7 @@ page = st.sidebar.selectbox("Pilih Halaman", ["Dashboard", "Rekomendasi"])
 
 if page == "Dashboard":
     st.markdown("<h1 style='text-align: center;'>WISATAKU</h1>", unsafe_allow_html=True,)
-    st.markdown("<h2 style='text-align: center;'>Sahabat Rekomendasi Wisatamu</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center;'>Rekomendasi Destinasi Wisata D.I.Y dan Semarang</h2>", unsafe_allow_html=True)
 
     # Filter di halaman utama
     st.markdown("### Filter Data")

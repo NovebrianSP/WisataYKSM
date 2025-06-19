@@ -49,16 +49,18 @@ st.plotly_chart(fig_price, use_container_width=True)
 
 # Map Interaktif
 st.markdown("## Peta Persebaran Destinasi Wisata")
-lat_col = "Lat"
-lon_col = "Long"
+
+filtered_df["lat_decimal"] = filtered_df["Lat"] / 1e7
+filtered_df["long_decimal"] = filtered_df["Long"] / 1e7
+
 m = folium.Map(
-    location=[filtered_df[lat_col].mean(), filtered_df[lon_col].mean()],
-    zoom_start=12
+    location=[filtered_df["lat_decimal"].mean(), filtered_df["long_decimal"].mean()],
+    zoom_start=11
 )
 
 for _, row in filtered_df.iterrows():
     folium.Marker(
-        location=[row[lat_col], row[lon_col]],
+        location=[row["lat_decimal"], row["long_decimal"]],
         popup=f"<b>{row['Place_Name']}</b><br>Rating: {row['Rating']}<br>Harga: Rp{row['Price']:,.0f}",
         tooltip=row["Place_Name"],
         icon=folium.Icon(color="blue" if row["Outdoor/Indoor"] == "Outdoor" else "green")

@@ -5,7 +5,7 @@ import folium
 from streamlit_folium import st_folium
 
 # Load data
-DATA_PATH = "../data/destinasi-wisata-YKSM.csv"
+DATA_PATH = "data/destinasi-wisata-YKSM.csv"
 df = pd.read_csv(DATA_PATH)
 
 st.set_page_config(page_title="Dashboard Destinasi Wisata Yogyakarta", layout="wide")

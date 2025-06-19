@@ -87,28 +87,30 @@ if page == "Dashboard":
         st.plotly_chart(fig_price, use_container_width=True)
     else:
         st.info("Tidak ada data untuk ditampilkan pada grafik harga.")
-
-    # Map Interaktif
-    st.markdown("## Peta Persebaran Destinasi Wisata")
-    if not filtered_df.empty:
-        m = folium.Map(
-            location=[filtered_df["lat_decimal"].mean(), filtered_df["long_decimal"].mean()],
-            zoom_start=11
-        )
-        for _, row in filtered_df.iterrows():
-            folium.Marker(
-                location=[row["lat_decimal"], row["long_decimal"]],
-                popup=f"<b>{row['Place_Name']}</b><br>Rating: {row['Rating']}<br>Harga: Rp{row['Price']:,.0f}",
-                tooltip=row["Place_Name"],
-                icon=folium.Icon(color="blue" if row["Outdoor/Indoor"] == "Outdoor" else "green")
-            ).add_to(m)
-        st_folium(m, width=900, height=500)
-    else:
-        st.info("Tidak ada data untuk ditampilkan pada peta.")
-
+        
     # Tabel Data
     st.markdown("## Data Destinasi Wisata")
     st.dataframe(filtered_df.reset_index(drop=True))
+
+    # Map Interaktif di tengah
+    st.markdown("## Peta Persebaran Destinasi Wisata")
+    if not filtered_df.empty:
+        map_col1, map_col2, map_col3 = st.columns([1, 6, 1])
+        with map_col2:
+            m = folium.Map(
+                location=[filtered_df["lat_decimal"].mean(), filtered_df["long_decimal"].mean()],
+                zoom_start=11
+            )
+            for _, row in filtered_df.iterrows():
+                folium.Marker(
+                    location=[row["lat_decimal"], row["long_decimal"]],
+                    popup=f"<b>{row['Place_Name']}</b><br>Rating: {row['Rating']}<br>Harga: Rp{row['Price']:,.0f}",
+                    tooltip=row["Place_Name"],
+                    icon=folium.Icon(color="blue" if row["Outdoor/Indoor"] == "Outdoor" else "green")
+                ).add_to(m)
+            st_folium(m, width=900, height=500)
+    else:
+        st.info("Tidak ada data untuk ditampilkan pada peta.")
 
 elif page == "Rekomendasi":
     st.title("Rekomendasi Destinasi Wisata")

@@ -118,10 +118,10 @@ if page == "Dashboard":
 
     @st.cache_resource
     def load_content_based():
-        df = pd.read_csv(csv_path)
-        with open("content_based_tfidf.pkl", "rb") as f:
+        df = pd.read_csv(os.path.join(os.path.dirname(__file__), "data/content_based_index.csv"))
+        with open(os.path.join(os.path.dirname(__file__), "data/content_based_tfidf.pkl"), "rb") as f:
             tfidf = pickle.load(f)
-        with open("content_based_matrix.pkl", "rb") as f:
+        with open(os.path.join(os.path.dirname(__file__), "data/content_based_matrix.pkl"), "rb") as f:
             tfidf_matrix = pickle.load(f)
         return df, tfidf, tfidf_matrix
 

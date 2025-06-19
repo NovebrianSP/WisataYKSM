@@ -69,21 +69,21 @@ if page == "Dashboard":
     st.markdown("### Distribusi Kategori")
     if not filtered_df.empty:
         fig_cat = px.histogram(filtered_df, x="Category", color="Category", title="Jumlah Destinasi per Kategori")
-        st.plotly_chart(fig_cat, use_container_width=True)
+        st.plotly_chart(fig_cat, use_container_width=True, config={'staticPlot': True})
     else:
         st.info("Tidak ada data untuk ditampilkan pada grafik kategori.")
 
     st.markdown("### Distribusi Rating")
     if not filtered_df.empty:
         fig_rating = px.histogram(filtered_df, x="Rating", nbins=20, title="Distribusi Rating Destinasi")
-        st.plotly_chart(fig_rating, use_container_width=True)
+        st.plotly_chart(fig_rating, use_container_width=True, config={'staticPlot': True})
     else:
         st.info("Tidak ada data untuk ditampilkan pada grafik rating.")
 
     st.markdown("### Distribusi Harga Tiket")
     if not filtered_df.empty:
         fig_price = px.histogram(filtered_df, x="Price", nbins=20, title="Distribusi Harga Tiket")
-        st.plotly_chart(fig_price, use_container_width=True)
+        st.plotly_chart(fig_price, use_container_width=True, config={'staticPlot': True})
     else:
         st.info("Tidak ada data untuk ditampilkan pada grafik harga.")
 
@@ -91,9 +91,10 @@ if page == "Dashboard":
     st.dataframe(filtered_df.reset_index(drop=True), use_container_width=True)
 
     st.markdown("## Peta Persebaran Destinasi Wisata")
+
     if not filtered_df.empty:
         m = folium.Map(
-            location=[filtered_df["lat_decimal"].mean(), filtered_df["long_decimal"].mean()],
+            location=st.session_state["map_center"],
             zoom_start=11
         )
         for _, row in filtered_df.iterrows():

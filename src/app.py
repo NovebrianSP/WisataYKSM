@@ -118,16 +118,16 @@ if page == "Dashboard":
 
     @st.cache_resource
     def load_content_based():
-        df = pd.read_csv(os.path.join(os.path.dirname(__file__), "data/content_based_index.csv"))
-        with open(os.path.join(os.path.dirname(__file__), "data/content_based_tfidf.pkl"), "rb") as f:
+        df = pd.read_csv("data/destinasi-wisata-YKSM.csv")
+        with open("content_based_tfidf.pkl", "rb") as f:
             tfidf = pickle.load(f)
-        with open(os.path.join(os.path.dirname(__file__), "data/content_based_matrix.pkl"), "rb") as f:
+        with open("content_based_matrix.pkl", "rb") as f:
             tfidf_matrix = pickle.load(f)
         return df, tfidf, tfidf_matrix
 
     df_cb, tfidf, tfidf_matrix = load_content_based()
 
-    def get_recommendations(place_name, top_n=5):
+    def get_content_based_recommendations(place_name, top_n=10):
         idx = df_cb[df_cb['Place_Name'].str.lower() == place_name.lower()].index
         if len(idx) == 0:
             return []
@@ -141,27 +141,39 @@ if page == "Dashboard":
                 "Category": df_cb.iloc[i]["Category"],
                 "City": df_cb.iloc[i]["City"],
                 "Rating": df_cb.iloc[i]["Rating"],
+                "Rating_Count": df_cb.iloc[i].get("Rating_Count", 0),
                 "Price": df_cb.iloc[i]["Price"],
                 "Description": df_cb.iloc[i]["Description"],
                 "Score": cosine_similarities[i]
             })
         return results
 
-    # --- Halaman Rekomendasi Content-Based ---
+    def get_hybrid_recommendations(place_name, top_n=5):
+        # Ambil 10 teratas content-based
+        content_recs = get_content_based_recommendations(place_name, top_n=10)
+        # Urutkan berdasarkan rating dan rating_count (popularity)
+        content_recs = sorted(
+            content_recs,
+            key=lambda x: (x["Rating"], x.get("Rating_Count", 0)),
+            reverse=True
+        )
+        return content_recs[:top_n]
+
+    # --- Halaman Hybrid Recommendation ---
     if page == "Rekomendasi":
-        st.title("Rekomendasi Destinasi Wisata (Content-Based)")
-        st.write("Pilih destinasi yang Anda sukai, lalu dapatkan rekomendasi destinasi serupa:")
+        st.title("Rekomendasi Destinasi Wisata (Hybrid Filtering)")
+        st.write("Pilih destinasi yang Anda sukai, lalu dapatkan rekomendasi destinasi serupa dan populer:")
 
         place_options = df_cb["Place_Name"].sort_values().unique()
         selected_place = st.selectbox("Pilih Destinasi", place_options)
 
         if selected_place:
-            rekomendasi = get_recommendations(selected_place, top_n=5)
+            rekomendasi = get_hybrid_recommendations(selected_place, top_n=5)
             if rekomendasi:
-                st.markdown(f"#### Rekomendasi mirip dengan **{selected_place}**:")
+                st.markdown(f"#### Rekomendasi mirip dan populer dengan **{selected_place}**:")
                 for rec in rekomendasi:
                     st.markdown(f"**{rec['Place_Name']}**")
-                    st.write(f"Kategori: {rec['Category']}, Kota: {rec['City']}, Rating: {rec['Rating']}, Harga: Rp{rec['Price']:,.0f}")
+                    st.write(f"Kategori: {rec['Category']}, Kota: {rec['City']}, Rating: {rec['Rating']} ({rec.get('Rating_Count', 0)} ulasan), Harga: Rp{rec['Price']:,.0f}")
                     st.write(rec['Description'])
                     st.write(f"Skor kemiripan: {rec['Score']:.3f}")
                     st.markdown("---")

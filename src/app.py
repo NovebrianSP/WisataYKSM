@@ -91,10 +91,9 @@ if page == "Dashboard":
     st.dataframe(filtered_df.reset_index(drop=True), use_container_width=True)
 
     st.markdown("## Peta Persebaran Destinasi Wisata")
-
     if not filtered_df.empty:
         m = folium.Map(
-            location=st.session_state["map_center"],
+            location=[filtered_df["lat_decimal"].mean(), filtered_df["long_decimal"].mean()],
             zoom_start=11
         )
         for _, row in filtered_df.iterrows():

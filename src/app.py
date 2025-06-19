@@ -33,7 +33,8 @@ st.set_page_config(page_title="Dashboard Destinasi Wisata Yogyakarta", layout="w
 page = st.sidebar.selectbox("Pilih Halaman", ["Dashboard", "Rekomendasi"])
 
 if page == "Dashboard":
-    st.title("WISATAKU = Rekomendasi Destinasi Wisata Yogyakarta & Semarang")
+    st.title("WISATAKU")
+    st.header("Rekomendasi Destinasi Wisata Yogyakarta dan Semarang")
 
     # Filter di halaman utama
     st.markdown("### Filter Data")

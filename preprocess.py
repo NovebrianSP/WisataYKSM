@@ -8,6 +8,13 @@ selected_cities = ['Semarang', 'Yogyakarta']
 
 df_selected = df[df['City'].str.strip().isin(selected_cities)].copy()
 
+# Hapus kolom yang tidak diperlukan
+df = df.drop(columns=["Time_Minutes", "Column1", "_1"], errors="ignore")
+
+# Ubah Place_Id menjadi index mulai dari 0
+df = df.reset_index(drop=True)
+df["Place_Id"] = df.index
+
 # Tambahkan kolom Outdoor/Indoor
 def get_outdoor_indoor(row):
     indoor_categories = ['Budaya', 'Pusat Perbelanjaan', 'Tempat Ibadah', 'Museum']

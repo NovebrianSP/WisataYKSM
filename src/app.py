@@ -9,8 +9,6 @@ import pickle
 import requests
 from user_db import create_user_table, add_user, get_user, user_exists, hash_password, save_user_preference
 from user_db import get_similar_users, get_all_user_preferences
-from user_db import create_favorite_table, add_favorite, remove_favorite, is_favorite
-create_favorite_table()
 create_user_table()
 
 # Load data
@@ -452,24 +450,7 @@ if page == "Rekomendasi":
                     idx = i + j
                     if idx < len(items):
                         row = items.iloc[idx]
-                        # Gunakan Place_Id jika ada, jika tidak gunakan Place_Name
-                        place_id = str(row['Place_Id']) if 'Place_Id' in row else row['Place_Name']
-                        is_fav = False
-                        if st.session_state.get("logged_in"):
-                            is_fav = is_favorite(st.session_state["username"], place_id)
-                        star = "⭐" if is_fav else "☆"
-                        btn_key = f"fav_{place_id}_{i}_{j}"
                         with cols[j]:
-                            # Tombol bintang
-                            if st.session_state.get("logged_in"):
-                                if st.button(star, key=btn_key):
-                                    if is_fav:
-                                        remove_favorite(st.session_state["username"], place_id)
-                                        st.success(f"{row['Place_Name']} dihapus dari favorit.")
-                                    else:
-                                        add_favorite(st.session_state["username"], place_id)
-                                        st.success(f"{row['Place_Name']} ditambahkan ke favorit.")
-                                    st.experimental_rerun()
                             st.markdown(
                                 f"""
                                 <div style="border:1px solid #5555; border-radius:8px; padding:10px; margin-bottom:10px; background:#000000">
@@ -479,7 +460,6 @@ if page == "Rekomendasi":
                                     <span>Harga: Rp{row['Price']:,.0f}</span><br>
                                     <span>Rating: {row['Rating']}</span><br>
                                     <span>Outdoor/Indoor: {row['Outdoor/Indoor']}</span><br>
-                                    {"<span style='color:gold;'>⭐ Anda telah menambah ini ke daftar favorit anda</span>" if is_fav else ""}
                                 </div>
                                 """,
                                 unsafe_allow_html=True

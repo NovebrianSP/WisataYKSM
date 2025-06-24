@@ -6,6 +6,7 @@ import folium
 from streamlit_folium import st_folium
 import os
 import pickle
+import requests
 from sklearn.metrics.pairwise import linear_kernel
 from user_db import create_user_table, add_user, get_user, user_exists, hash_password, save_user_preference
 from user_db import get_similar_users, get_all_user_preferences
@@ -82,7 +83,6 @@ if page == "Dashboard":
     if st.session_state.get("logged_in"):
         with st.sidebar:
             st.success(f"👋 Selamat Datang {st.session_state['username']}")
-        # Dropdown user di kanan atas
         col1, col2 = st.columns([8, 4])
         with col2:
             with st.expander(st.session_state['username']):
@@ -98,8 +98,9 @@ if page == "Dashboard":
         category = st.multiselect("Kategori", options=sorted(df["Category"].dropna().unique()))
         city = st.multiselect("Kota", options=sorted(df["City"].dropna().unique()))
         indoor_outdoor = st.multiselect("Outdoor/Indoor", options=sorted(df["Outdoor/Indoor"].dropna().unique()))
+        harga = st.selectbox("Harga Tiket", options=["", "Murah (<20000)", "Sedang (20000-50000)", "Mahal (>50000)"])
 
-    if (not category) and (not city) and (not indoor_outdoor):
+    if (not category) and (not city) and (not indoor_outdoor) and (not harga):
         st.warning("Tidak ada filter dipilih. Menampilkan semua data.")
         filtered_df = df.copy()
     else:
@@ -110,6 +111,13 @@ if page == "Dashboard":
             filtered_df = filtered_df[filtered_df["City"].isin(city)]
         if indoor_outdoor:
             filtered_df = filtered_df[filtered_df["Outdoor/Indoor"].isin(indoor_outdoor)]
+        if harga:
+            if harga == "Murah (<20000)":
+                filtered_df = filtered_df[filtered_df["Price"] < 20000]
+            elif harga == "Sedang (20000-50000)":
+                filtered_df = filtered_df[(filtered_df["Price"] >= 20000) & (filtered_df["Price"] <= 50000)]
+            elif harga == "Mahal (>50000)":
+                filtered_df = filtered_df[filtered_df["Price"] > 50000]
 
     st.subheader("Statistik Persebaran Data")
     col1, col2 = st.columns(2)
@@ -160,7 +168,6 @@ if page == "Dashboard":
         st_folium(m, use_container_width=True, height=400)
     else:
         st.info("Tidak ada data untuk ditampilkan pada peta.")
-        
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -180,36 +187,152 @@ def load_content_based():
         tfidf_matrix = pickle.load(f)
     return df, tfidf, tfidf_matrix
 
-def get_hybrid_recommendations(df, username, kota, harga, cuaca):
+CITY_OPTIONS = sorted(df["City"].dropna().unique())
+
+LOKASI_KOORDINAT = {
+    "Kota Yogyakarta": (-7.801194, 110.364917),
+    "Sleman": (-7.718817, 110.357563),
+    "Bantul": (-7.887924, 110.328797),
+    "Kulon Progo": (-7.824034, 110.164776),
+    "Gunungkidul": (-8.030520, 110.616892),
+    "Kota Semarang": (-7.005145, 110.438125),
+    "Kabupaten Semarang": (-7.268218, 110.404556),
+    "Semarang": (-7.005145, 110.438125),
+    "Yogyakarta": (-7.801194, 110.364917),
+}
+
+def get_open_meteo_weather(lat, lon):
+    url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+    try:
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        if "current_weather" in data:
+            cw = data["current_weather"]
+            return {
+                "temperature": cw.get("temperature"),
+                "windspeed": cw.get("windspeed"),
+                "weathercode": cw.get("weathercode"),
+                "desc": weather_code_to_desc(cw.get("weathercode"))
+            }
+    except Exception as e:
+        return None
+    return None
+
+def weather_code_to_desc(code):
+    mapping = {
+        0: "Cerah",
+        1: "Cerah Berawan",
+        2: "Berawan",
+        3: "Mendung",
+        45: "Berkabut",
+        48: "Berkabut",
+        51: "Gerimis",
+        53: "Gerimis",
+        55: "Gerimis",
+        56: "Gerimis Beku",
+        57: "Gerimis Beku",
+        61: "Hujan Ringan",
+        63: "Hujan Sedang",
+        65: "Hujan Lebat",
+        66: "Hujan Beku",
+        67: "Hujan Beku",
+        71: "Salju Ringan",
+        73: "Salju Sedang",
+        75: "Salju Lebat",
+        77: "Butiran Salju",
+        80: "Hujan Lokal",
+        81: "Hujan Lokal",
+        82: "Hujan Lokal Lebat",
+        85: "Salju Lokal",
+        86: "Salju Lokal Lebat",
+        95: "Badai Petir",
+        96: "Badai Petir Hujan Es",
+        99: "Badai Petir Hujan Es"
+    }
+    return mapping.get(code, "Tidak diketahui")
+
+df_cb, tfidf, tfidf_matrix = load_content_based()
+
+def get_content_based_recommendations_by_filter(df, lokasi_terkini, cuaca_user, kategori=None, harga=None):
+    filtered = df.copy()
+    filtered.loc[filtered["Place_Name"].str.lower().str.contains("alun-alun", na=False), "Outdoor/Indoor"] = "Outdoor"
+
+    # Filter lokasi hanya berdasarkan city dari csv
+    if lokasi_terkini:
+        filtered = filtered[filtered["City"] == lokasi_terkini]
+
+    # Filter kategori
+    if kategori:
+        filtered = filtered[filtered["Category"] == kategori]
+
+    # Filter harga
+    if harga:
+        if harga == "Murah (<20000)":
+            filtered = filtered[filtered["Price"] < 20000]
+        elif harga == "Sedang (20000-50000)":
+            filtered = filtered[(filtered["Price"] >= 20000) & (filtered["Price"] <= 50000)]
+        elif harga == "Mahal (>50000)":
+            filtered = filtered[filtered["Price"] > 50000]
+
+    # Pastikan kolom Outdoor/Indoor tidak kosong
+    filtered = filtered[filtered["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
+
+    # Filter outdoor/indoor sesuai cuaca
+    if cuaca_user:
+        if cuaca_user in ["Cerah", "Cerah Berawan", "Berawan"]:
+            filtered = filtered[filtered["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
+        else:
+            filtered = filtered[filtered["Outdoor/Indoor"] == "Indoor"]
+
+    # Urutkan berdasarkan jarak ke pusat kota
+    pusat_lat, pusat_lon = None, None
+    if lokasi_terkini in LOKASI_KOORDINAT and not filtered.empty:
+        pusat_lat, pusat_lon = LOKASI_KOORDINAT[lokasi_terkini]
+    if pusat_lat is not None and pusat_lon is not None:
+        filtered["Jarak (km)"] = filtered.apply(
+            lambda row: haversine(
+                pusat_lat, pusat_lon,
+                row.get("lat_decimal", np.nan), row.get("long_decimal", np.nan)
+            ), axis=1
+        )
+        filtered = filtered.sort_values("Jarak (km)")
+    return filtered
+
+def get_hybrid_recommendations(df, username, lokasi_terkini, cuaca_user, kategori=None, harga=None):
     similar_users = get_similar_users(username)
     prefs_df = get_all_user_preferences()
     collaborative_ids = []
     if similar_users:
         prefs_df = prefs_df[prefs_df['username'].isin(similar_users)]
-        filter_kota = prefs_df['kota'].mode()[0] if not prefs_df['kota'].mode().empty else kota
-        filter_harga = prefs_df['harga'].mode()[0] if not prefs_df['harga'].mode().empty else harga
-        filter_cuaca = prefs_df['cuaca'].mode()[0] if not prefs_df['cuaca'].mode().empty else cuaca
+        filter_lokasi = prefs_df['kota'].mode()[0] if not prefs_df['kota'].mode().empty else lokasi_terkini
+        filter_cuaca = prefs_df['cuaca'].mode()[0] if not prefs_df['cuaca'].mode().empty else cuaca_user
+        filter_kategori = prefs_df['kategori'].mode()[0] if 'kategori' in prefs_df and not prefs_df['kategori'].mode().empty else kategori
+        filter_harga = prefs_df['harga'].mode()[0] if 'harga' in prefs_df and not prefs_df['harga'].mode().empty else harga
         collaborative = df.copy()
-        if filter_kota:
-            collaborative = collaborative[collaborative['City'] == filter_kota]
-        # --- Perbaikan di bawah ini ---
+        if filter_lokasi:
+            collaborative = collaborative[collaborative['City'] == filter_lokasi]
+        if filter_kategori:
+            collaborative = collaborative[collaborative["Category"] == filter_kategori]
         if filter_harga:
-            if filter_harga == "Murah (< Rp20.000)":
+            if filter_harga == "Murah (<20000)":
                 collaborative = collaborative[collaborative["Price"] < 20000]
-            elif filter_harga == "Sedang (Rp20.000 - Rp50.000)":
+            elif filter_harga == "Sedang (20000-50000)":
                 collaborative = collaborative[(collaborative["Price"] >= 20000) & (collaborative["Price"] <= 50000)]
-            elif filter_harga == "Mahal (> Rp50.000)":
+            elif filter_harga == "Mahal (>50000)":
                 collaborative = collaborative[collaborative["Price"] > 50000]
-        # --- End Perbaikan ---
-        if filter_cuaca and filter_cuaca != "Semua":
-            collaborative = collaborative[collaborative['Cuaca'] == filter_cuaca]
+        collaborative = collaborative[collaborative["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
+        if filter_cuaca:
+            if filter_cuaca in ["Cerah", "Cerah Berawan", "Berawan"]:
+                collaborative = collaborative[collaborative["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
+            else:
+                collaborative = collaborative[collaborative["Outdoor/Indoor"] == "Indoor"]
         collaborative_ids = collaborative['Place_Name'].tolist()
     else:
         collaborative = pd.DataFrame()
 
     # Content-based: destinasi sesuai filter user saat ini
-    content_based = get_content_based_recommendations_by_filter(df, kota, harga, cuaca)
-    content_ids = content_based['Nama Tempat'].tolist() if not content_based.empty else []
+    content_based = get_content_based_recommendations_by_filter(df, lokasi_terkini, cuaca_user, kategori, harga)
+    content_ids = content_based['Place_Name'].tolist() if not content_based.empty else []
 
     # Gabungkan hasil collaborative dan content-based (prioritaskan yang muncul di kedua)
     hybrid_ids = []
@@ -225,167 +348,112 @@ def get_hybrid_recommendations(df, username, kota, harga, cuaca):
 
     # Ambil data destinasi berdasarkan urutan hybrid_ids
     hybrid_df = df[df['Place_Name'].isin(hybrid_ids)]
-    hybrid_df['hybrid_rank'] = hybrid_df['Place_Name'].apply(lambda x: hybrid_ids.index(x))
-    hybrid_df = hybrid_df.sort_values('hybrid_rank').drop('hybrid_rank', axis=1)
-    return hybrid_df.head(10)
 
-LOKASI_KOORDINAT = {
-    "Kota Yogyakarta": (-7.801194, 110.364917),
-    "Sleman": (-7.718817, 110.357563),
-    "Bantul": (-7.887924, 110.328797),
-    "Kulon Progo": (-7.824034, 110.164776),
-    "Gunungkidul": (-8.030520, 110.616892),
-    "Kota Semarang": (-7.005145, 110.438125),
-    "Kabupaten Semarang": (-7.268218, 110.404556)
-}
+    # Urutkan berdasarkan jarak ke pusat kota
+    pusat_lat, pusat_lon = None, None
+    if lokasi_terkini in LOKASI_KOORDINAT and not hybrid_df.empty:
+        pusat_lat, pusat_lon = LOKASI_KOORDINAT[lokasi_terkini]
+    if pusat_lat is not None and pusat_lon is not None and not hybrid_df.empty:
+        hybrid_df["Jarak (km)"] = hybrid_df.apply(
+            lambda row: haversine(
+                pusat_lat, pusat_lon,
+                row.get("lat_decimal", np.nan), row.get("long_decimal", np.nan)
+            ), axis=1
+        )
+        hybrid_df = hybrid_df.sort_values("Jarak (km)")
+    return hybrid_df
 
-KOTA_LOKASI_MAP = {
-    "Kota Yogyakarta": ["Kota Yogyakarta", "Sleman", "Bantul", "Kulon Progo", "Gunungkidul"],
-    "Sleman": ["Sleman", "Kota Yogyakarta", "Bantul", "Kulon Progo", "Gunungkidul"],
-    "Bantul": ["Bantul", "Kota Yogyakarta", "Sleman", "Kulon Progo", "Gunungkidul"],
-    "Kulon Progo": ["Kulon Progo", "Kota Yogyakarta", "Sleman", "Bantul", "Gunungkidul"],
-    "Gunungkidul": ["Gunungkidul", "Kota Yogyakarta", "Sleman", "Bantul", "Kulon Progo"],
-    "Kota Semarang": ["Kota Semarang", "Kabupaten Semarang"],
-    "Kabupaten Semarang": ["Kabupaten Semarang", "Kota Semarang"]
-}
-
-df_cb, tfidf, tfidf_matrix = load_content_based()
-
-def get_content_based_recommendations_by_filter(df, kota, harga, cuaca, rating=None):
-    filtered = df.copy()
-    filtered.loc[filtered["Place_Name"].str.lower().str.contains("alun-alun", na=False), "Outdoor/Indoor"] = "Outdoor"
-
-    if kota:
-        filtered = filtered[filtered["City"] == kota]
-    if harga:
-        if harga == "Murah (< Rp20.000)":
-            filtered = filtered[filtered["Price"] < 20000]
-        elif harga == "Sedang (Rp20.000 - Rp50.000)":
-            filtered = filtered[(filtered["Price"] >= 20000) & (filtered["Price"] <= 50000)]
-        elif harga == "Mahal (> Rp50.000)":
-            filtered = filtered[filtered["Price"] > 50000]
-    if cuaca and cuaca != "Semua":
-        if cuaca == "Hujan":
-            filtered = filtered[filtered["Outdoor/Indoor"] == "Indoor"]
-        elif cuaca == "Cerah":
-            filtered = filtered[filtered["Outdoor/Indoor"] == "Outdoor"]
-        elif cuaca == "Berawan":
-            pass
-    if rating:
-        try:
-            rating_val = float(rating)
-            filtered = filtered[filtered["Rating"] >= rating_val]
-        except:
-            pass
-
-    if filtered.empty:
-        return pd.DataFrame()
-    anchor = filtered.iloc[0]["Place_Name"]
-    idx = df[df['Place_Name'] == anchor].index[0]
-    cosine_similarities = linear_kernel(tfidf_matrix[idx:idx+1], tfidf_matrix).flatten()
-    sorted_indices = cosine_similarities.argsort()[::-1]
-    results = []
-    for i in sorted_indices:
-        row = df.iloc[i].copy()
-        if "alun-alun" in str(row["Place_Name"]).lower():
-            row["Outdoor/Indoor"] = "Outdoor"
-        if kota and row["City"] != kota:
-            continue
-        if harga:
-            if harga == "Murah (< Rp20.000)" and row["Price"] >= 20000:
-                continue
-            if harga == "Sedang (Rp20.000 - Rp50.000)" and not (20000 <= row["Price"] <= 50000):
-                continue
-            if harga == "Mahal (> Rp50.000)" and row["Price"] <= 50000:
-                continue
-        if cuaca and cuaca != "Semua":
-            if cuaca == "Hujan" and row["Outdoor/Indoor"] != "Indoor":
-                continue
-            if cuaca == "Cerah" and row["Outdoor/Indoor"] != "Outdoor":
-                continue
-        if rating:
-            try:
-                rating_val = float(rating)
-                if row["Rating"] < rating_val:
-                    continue
-            except:
-                pass
-        results.append({
-            "Nama Tempat": row["Place_Name"],
-            "Kota": row["City"],
-            "Outdoor/Indoor": row["Outdoor/Indoor"],
-            "Harga": f"Rp{row['Price']:,.0f}",
-            "Rating": row["Rating"],
-            "Jumlah Ulasan": row.get("Rating_Count", 0),
-            "Skor Kemiripan": f"{cosine_similarities[i]:.3f}"
-        })
-    return pd.DataFrame(results)
-
+# --- UI Bagian Rekomendasi ---
 if page == "Rekomendasi":
     st.markdown("<h2 style='text-align: center;'>Rekomendasi Destinasi Wisata</h2>", unsafe_allow_html=True)
     st.write("Pilih preferensi Anda:")
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        kota = st.selectbox("Kota", options=[""] + sorted(df_cb["City"].dropna().unique().tolist()), key="kota")
-    with col2:
-        harga = st.selectbox("Harga", options=["", "Murah (< Rp20.000)", "Sedang (Rp20.000 - Rp50.000)", "Mahal (> Rp50.000)"], key="harga")
-    with col3:
-        cuaca = st.selectbox("Cuaca Saat Ini", options=["Semua", "Cerah", "Hujan", "Berawan"], key="cuaca")
-    with col4:
-        rating = st.selectbox("Rating Minimal", options=[""] + [str(r) for r in range(1, 6)], key="rating")  # 1-5
-
-    # Lokasi terkini menyesuaikan kota
-    if kota and kota in KOTA_LOKASI_MAP:
-        lokasi_options = KOTA_LOKASI_MAP[kota]
-    else:
-        lokasi_options = list(LOKASI_KOORDINAT.keys())
+    lokasi_options = [""] + CITY_OPTIONS
+    kategori_options = [""] + sorted(df["Category"].dropna().unique())
+    harga_options = ["", "Murah (<20000)", "Sedang (20000-50000)", "Mahal (>50000)"]
 
     lokasi_terkini = st.selectbox(
         "Lokasi Terkini Anda",
-        options=[""] + lokasi_options,
+        options=lokasi_options,
         key="lokasi_terkini"
     )
+    kategori = st.selectbox(
+        "Kategori",
+        options=kategori_options,
+        key="kategori"
+    )
+    harga = st.selectbox(
+        "Harga Tiket",
+        options=harga_options,
+        key="harga"
+    )
+
+    # Ambil cuaca otomatis dari lokasi user
+    cuaca_user = None
+    if lokasi_terkini in LOKASI_KOORDINAT:
+        lat, lon = LOKASI_KOORDINAT[lokasi_terkini]
+        cuaca_data = get_open_meteo_weather(lat, lon)
+        if cuaca_data:
+            cuaca_user = cuaca_data['desc']
+            st.info(f"Cuaca di kota Anda ({lokasi_terkini}): **{cuaca_user}**")
+        else:
+            st.warning("Gagal mengambil data cuaca kota Anda. Filter cuaca dinonaktifkan.")
 
     if not st.session_state.get("logged_in"):
-        st.warning("Anda belum login. Rekomendasi hanya didasarkan pada rating konten saja, dan tidak ada preferensi pengguna.")
+        st.warning("Anda belum login. Rekomendasi hanya didasarkan pada konten saja, dan tidak ada preferensi pengguna.")
 
     if st.button("Rekomendasikan"):
-        # Pilih metode rekomendasi
         if st.session_state.get("logged_in"):
             similar_users = get_similar_users(st.session_state["username"])
             if similar_users:
-                rekomendasi_df = get_hybrid_recommendations(df_cb, st.session_state["username"], kota, harga, cuaca, rating)
+                rekomendasi_df = get_hybrid_recommendations(
+                    df_cb, st.session_state["username"], lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
+                )
             else:
-                rekomendasi_df = get_content_based_recommendations_by_filter(df_cb, kota, harga, cuaca, rating)
-            # Simpan preferensi
+                rekomendasi_df = get_content_based_recommendations_by_filter(
+                    df_cb, lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
+                )
             save_user_preference(
                 st.session_state["username"],
-                kota,
+                lokasi_terkini,
                 harga,
-                cuaca,
-                lokasi_terkini
+                cuaca_user,
+                kategori
             )
         else:
-            rekomendasi_df = get_content_based_recommendations_by_filter(df_cb, kota, harga, cuaca, rating)
+            rekomendasi_df = get_content_based_recommendations_by_filter(
+                df_cb, lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
+            )
 
-        # Urutkan berdasarkan jarak jika lokasi terkini dipilih
-        if lokasi_terkini and lokasi_terkini in LOKASI_KOORDINAT and not rekomendasi_df.empty:
-            pusat_lat, pusat_lon = LOKASI_KOORDINAT[lokasi_terkini]
-            # Pastikan kolom koordinat ada
-            if "lat_decimal" in rekomendasi_df.columns and "long_decimal" in rekomendasi_df.columns:
-                rekomendasi_df["Jarak (km)"] = rekomendasi_df.apply(
-                    lambda row: haversine(
-                        pusat_lat, pusat_lon,
-                        row.get("lat_decimal", np.nan), row.get("long_decimal", np.nan)
-                    ), axis=1
-                )
-                rekomendasi_df = rekomendasi_df.sort_values("Jarak (km)")
+        # Fallback: jika hasil kosong, tampilkan semua destinasi di kota tsb
+        if rekomendasi_df.empty:
+            st.error("Tidak ada destinasi yang sesuai dengan filter lokasi, kategori, atau harga yang Anda pilih. Silakan coba filter lain.")
 
-        # Tampilkan hasil rekomendasi
         if not rekomendasi_df.empty:
-            st.markdown("#### Tabel Rekomendasi Destinasi Wisata:")
-            st.dataframe(rekomendasi_df, use_container_width=True)
-            st.caption(f"Menampilkan {len(rekomendasi_df)} rekomendasi")
+            st.markdown("#### Rekomendasi Destinasi Wisata Terdekat:")
+            # Tampilkan sebagai item, 5 per baris
+            items = rekomendasi_df.reset_index(drop=True)
+            n_cols = 5
+            for i in range(0, len(items), n_cols):
+                cols = st.columns(n_cols)
+                for j in range(n_cols):
+                    idx = i + j
+                    if idx < len(items):
+                        row = items.iloc[idx]
+                        with cols[j]:
+                            st.markdown(
+                                f"""
+                                <div style="border:1px solid #5555; border-radius:8px; padding:10px; margin-bottom:10px; background:#000000">
+                                    <b>{row['Place_Name']}</b><br><br>
+                                    <i>{row['City']}</i><br><br>
+                                    <span>Kategori: {row['Category']}</span><br><br>
+                                    <span>Harga: Rp{row['Price']:,.0f}</span><br><br>
+                                    <span>Rating: {row['Rating']}</span><br><br>
+                                    <span>Outdoor/Indoor: {row['Outdoor/Indoor']}</span><br><br>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+            st.caption(f"Menampilkan {len(rekomendasi_df)} rekomendasi di sekitar {lokasi_terkini}")
         else:
             st.info("Tidak ada destinasi yang sesuai filter Anda.")

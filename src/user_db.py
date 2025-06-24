@@ -24,7 +24,22 @@ def create_user_table():
             harga TEXT,
             cuaca TEXT,
             lokasi_terkini TEXT,
+            kategori TEXT,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+# Tabel untuk favorit destinasi
+def create_favorite_table():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS user_favorite (
+            username TEXT NOT NULL,
+            place_id TEXT NOT NULL,
+            PRIMARY KEY (username, place_id)
         )
     """)
     conn.commit()
@@ -57,22 +72,21 @@ def user_exists(username, email):
     return user is not None
 
 # Fungsi untuk menyimpan preferensi pengguna
-def save_user_preference(username, kota, harga, cuaca, lokasi_terkini):
+def save_user_preference(username, kota, harga, cuaca, kategori, lokasi_terkini=None):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        INSERT INTO user_preferences (username, kota, harga, cuaca, lokasi_terkini)
-        VALUES (?, ?, ?, ?, ?)
-    """, (username, kota, harga, cuaca, lokasi_terkini))
+        INSERT INTO user_preferences (username, kota, harga, cuaca, kategori, lokasi_terkini)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (username, kota, harga, cuaca, kategori, lokasi_terkini))
     conn.commit()
     conn.close()
 
-# Fungsi untuk mengambil preferensi terakhir pengguna (opsional)
 def get_last_user_preference(username):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("""
-        SELECT kota, harga, cuaca, lokasi_terkini FROM user_preferences
+        SELECT kota, harga, cuaca, kategori, lokasi_terkini FROM user_preferences
         WHERE username=?
         ORDER BY timestamp DESC LIMIT 1
     """, (username,))
@@ -91,7 +105,7 @@ def get_similar_users(username, top_n=3):
     if df.empty or username not in df['username'].values:
         return []
     # Encode preferensi secara sederhana
-    pref_cols = ['kota', 'harga', 'cuaca', 'lokasi_terkini']
+    pref_cols = ['kota', 'harga', 'cuaca', 'kategori', 'lokasi_terkini']
     user_pref = df[df['username'] == username][pref_cols].mode().iloc[0]
     df = df[df['username'] != username]
     if df.empty:
@@ -102,3 +116,33 @@ def get_similar_users(username, top_n=3):
     df['similarity'] = df.apply(similarity, axis=1)
     similar_users = df[df['similarity'] == df['similarity'].max()]['username'].unique().tolist()
     return similar_users[:top_n]
+
+# ----------- FAVORITE SYSTEM -----------
+def add_favorite(username, place_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO user_favorite (username, place_id) VALUES (?, ?)", (username, place_id))
+    conn.commit()
+    conn.close()
+
+def remove_favorite(username, place_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM user_favorite WHERE username=? AND place_id=?", (username, place_id))
+    conn.commit()
+    conn.close()
+
+def is_favorite(username, place_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM user_favorite WHERE username=? AND place_id=?", (username, place_id))
+    result = c.fetchone()
+    conn.close()
+    return result is not None
+
+def get_user_favorites(username):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT place_id FROM user_favorite WHERE username=?", (username,))
+    result = [row[0] for row in c.fetchall()]
+    conn.close()

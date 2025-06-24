@@ -7,9 +7,10 @@ from streamlit_folium import st_folium
 import os
 import pickle
 import requests
-from sklearn.metrics.pairwise import linear_kernel
 from user_db import create_user_table, add_user, get_user, user_exists, hash_password, save_user_preference
 from user_db import get_similar_users, get_all_user_preferences
+from user_db import create_favorite_table, add_favorite, remove_favorite, is_favorite
+create_favorite_table()
 create_user_table()
 
 # Load data
@@ -304,7 +305,8 @@ def get_hybrid_recommendations(df, username, lokasi_terkini, cuaca_user, kategor
     collaborative_ids = []
     if similar_users:
         prefs_df = prefs_df[prefs_df['username'].isin(similar_users)]
-        filter_lokasi = prefs_df['kota'].mode()[0] if not prefs_df['kota'].mode().empty else lokasi_terkini
+        # Selalu gunakan lokasi_terkini dari input user untuk filter city
+        filter_lokasi = lokasi_terkini
         filter_cuaca = prefs_df['cuaca'].mode()[0] if not prefs_df['cuaca'].mode().empty else cuaca_user
         filter_kategori = prefs_df['kategori'].mode()[0] if 'kategori' in prefs_df and not prefs_df['kategori'].mode().empty else kategori
         filter_harga = prefs_df['harga'].mode()[0] if 'harga' in prefs_df and not prefs_df['harga'].mode().empty else harga
@@ -365,6 +367,17 @@ def get_hybrid_recommendations(df, username, lokasi_terkini, cuaca_user, kategor
 
 # --- UI Bagian Rekomendasi ---
 if page == "Rekomendasi":
+    if st.session_state.get("logged_in"):
+        with st.sidebar:
+            st.success(f"👋 Selamat Datang {st.session_state['username']}")
+        col1, col2 = st.columns([8, 4])
+        with col2:
+            with st.expander(st.session_state['username']):
+                if st.button("Logout"):
+                    st.session_state["logged_in"] = False
+                    st.session_state["username"] = ""
+                    st.rerun()
+                    
     st.markdown("<h2 style='text-align: center;'>Rekomendasi Destinasi Wisata</h2>", unsafe_allow_html=True)
     st.write("Pilih preferensi Anda:")
 
@@ -425,13 +438,12 @@ if page == "Rekomendasi":
                 df_cb, lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
             )
 
-        # Fallback: jika hasil kosong, tampilkan semua destinasi di kota tsb
+        # Fallback: jika hasil kosong, tampilkan pesan error
         if rekomendasi_df.empty:
             st.error("Tidak ada destinasi yang sesuai dengan filter lokasi, kategori, atau harga yang Anda pilih. Silakan coba filter lain.")
 
         if not rekomendasi_df.empty:
             st.markdown("#### Rekomendasi Destinasi Wisata Terdekat:")
-            # Tampilkan sebagai item, 5 per baris
             items = rekomendasi_df.reset_index(drop=True)
             n_cols = 5
             for i in range(0, len(items), n_cols):
@@ -440,16 +452,34 @@ if page == "Rekomendasi":
                     idx = i + j
                     if idx < len(items):
                         row = items.iloc[idx]
+                        # Gunakan Place_Id jika ada, jika tidak gunakan Place_Name
+                        place_id = str(row['Place_Id']) if 'Place_Id' in row else row['Place_Name']
+                        is_fav = False
+                        if st.session_state.get("logged_in"):
+                            is_fav = is_favorite(st.session_state["username"], place_id)
+                        star = "⭐" if is_fav else "☆"
+                        btn_key = f"fav_{place_id}_{i}_{j}"
                         with cols[j]:
+                            # Tombol bintang
+                            if st.session_state.get("logged_in"):
+                                if st.button(star, key=btn_key):
+                                    if is_fav:
+                                        remove_favorite(st.session_state["username"], place_id)
+                                        st.success(f"{row['Place_Name']} dihapus dari favorit.")
+                                    else:
+                                        add_favorite(st.session_state["username"], place_id)
+                                        st.success(f"{row['Place_Name']} ditambahkan ke favorit.")
+                                    st.experimental_rerun()
                             st.markdown(
                                 f"""
                                 <div style="border:1px solid #5555; border-radius:8px; padding:10px; margin-bottom:10px; background:#000000">
-                                    <b>{row['Place_Name']}</b><br><br>
-                                    <i>{row['City']}</i><br><br>
-                                    <span>Kategori: {row['Category']}</span><br><br>
-                                    <span>Harga: Rp{row['Price']:,.0f}</span><br><br>
-                                    <span>Rating: {row['Rating']}</span><br><br>
-                                    <span>Outdoor/Indoor: {row['Outdoor/Indoor']}</span><br><br>
+                                    <b>{row['Place_Name']}</b><br>
+                                    <i>{row['City']}</i><br>
+                                    <span>Kategori: {row['Category']}</span><br>
+                                    <span>Harga: Rp{row['Price']:,.0f}</span><br>
+                                    <span>Rating: {row['Rating']}</span><br>
+                                    <span>Outdoor/Indoor: {row['Outdoor/Indoor']}</span><br>
+                                    {"<span style='color:gold;'>⭐ Anda telah menambah ini ke daftar favorit anda</span>" if is_fav else ""}
                                 </div>
                                 """,
                                 unsafe_allow_html=True

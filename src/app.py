@@ -9,6 +9,8 @@ import pickle
 import requests
 from user_db import create_user_table, add_user, get_user, user_exists, hash_password, save_user_preference
 from user_db import get_similar_users, get_all_user_preferences
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
 create_user_table()
 
 # Load data
@@ -168,22 +170,54 @@ if page == "Dashboard":
     else:
         st.info("Tidak ada data untuk ditampilkan pada peta.")
 
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2.0)**2
-    c = 2 * np.arcsin(np.sqrt(a))
-    return R * c
+def rebuild_tfidf_model(df):
+    """Rebuild the TF-IDF model using the current dataframe"""
+    # Ensure Description column exists and has no NaN values
+    df = df.copy()
+    
+    # Create combined text field for TF-IDF
+    if "Description" in df.columns:
+        # Clean and combine with other fields for better matching
+        df["combined_text"] = df["Place_Name"] + " " + df["Category"].fillna("") + " " + df["Description"].fillna("")
+    else:
+        # If no description, use place name and category
+        df["combined_text"] = df["Place_Name"] + " " + df["Category"].fillna("")
+    
+    # Create and fit the TF-IDF vectorizer
+    tfidf = TfidfVectorizer(stop_words='english')
+    tfidf_matrix = tfidf.fit_transform(df["combined_text"])
+    
+    # Save the updated models
+    try:
+        with open(TFIDF_PATH, "wb") as f:
+            pickle.dump(tfidf, f)
+        with open(MATRIX_PATH, "wb") as f:
+            pickle.dump(tfidf_matrix, f)
+        print("TF-IDF model rebuilt and saved successfully")
+    except Exception as e:
+        print(f"Error saving TF-IDF model: {e}")
+    
+    return df, tfidf, tfidf_matrix
 
 @st.cache_resource
 def load_content_based():
     df = pd.read_csv(DATA_PATH)
-    with open(TFIDF_PATH, "rb") as f:
-        tfidf = pickle.load(f)
-    with open(MATRIX_PATH, "rb") as f:
-        tfidf_matrix = pickle.load(f)
+    
+    try:
+        with open(TFIDF_PATH, "rb") as f:
+            tfidf = pickle.load(f)
+        with open(MATRIX_PATH, "rb") as f:
+            tfidf_matrix = pickle.load(f)
+            
+        # Check if dimensions match
+        if len(df) != tfidf_matrix.shape[0]:
+            print("Rebuilding TF-IDF model due to dimension mismatch")
+            df, tfidf, tfidf_matrix = rebuild_tfidf_model(df)
+    except (FileNotFoundError, EOFError, pickle.PickleError) as e:
+        # If loading fails, rebuild the model
+        print(f"Building new TF-IDF model: {e}")
+        df, tfidf, tfidf_matrix = rebuild_tfidf_model(df)
+    
     return df, tfidf, tfidf_matrix
 
 CITY_OPTIONS = sorted(df["City"].dropna().unique())
@@ -252,89 +286,104 @@ def weather_code_to_desc(code):
 
 df_cb, tfidf, tfidf_matrix = load_content_based()
 
-def get_content_based_recommendations_by_filter(df, lokasi_terkini, cuaca_user, kategori=None, harga=None):
-    filtered = df.copy()
-    filtered.loc[filtered["Place_Name"].str.lower().str.contains("alun-alun", na=False), "Outdoor/Indoor"] = "Outdoor"
-
-    # Filter lokasi hanya berdasarkan city dari csv
+def get_content_based_recommendations_by_text(df, tfidf, tfidf_matrix, user_text, lokasi_terkini=None, cuaca_user=None, harga=None, top_n=50):
+    """Get content-based recommendations using text similarity with descriptions"""
+    # If empty text, return filtered results without similarity calculation
+    if not user_text.strip():
+        temp_df = df.copy()
+        temp_df['similarity_score'] = 0.5  # Neutral score
+        
+        # Apply filters
+        if lokasi_terkini:
+            temp_df = temp_df[temp_df["City"] == lokasi_terkini]
+        
+        if harga:
+            if harga == "Murah (<20000)":
+                temp_df = temp_df[temp_df["Price"] < 20000]
+            elif harga == "Sedang (20000-50000)":
+                temp_df = temp_df[(temp_df["Price"] >= 20000) & (temp_df["Price"] <= 50000)]
+            elif harga == "Mahal (>50000)":
+                temp_df = temp_df[temp_df["Price"] > 50000]
+        
+        if cuaca_user:
+            temp_df = temp_df[temp_df["Outdoor/Indoor"].notna()]
+            if cuaca_user in ["Cerah", "Cerah Berawan", "Berawan"]:
+                temp_df = temp_df[temp_df["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
+            else:
+                temp_df = temp_df[temp_df["Outdoor/Indoor"] == "Indoor"]
+                
+        return temp_df
+    
+    # If dataframe and TF-IDF matrix lengths don't match, rebuild the TF-IDF model
+    if len(df) != tfidf_matrix.shape[0]:
+        df, tfidf, tfidf_matrix = rebuild_tfidf_model(df)
+    
+    # Transform user text with TF-IDF vectorizer
+    user_vector = tfidf.transform([user_text])
+    
+    # Calculate cosine similarity between user text and all descriptions
+    sim_scores = cosine_similarity(user_vector, tfidf_matrix).flatten()
+    
+    # Add similarity scores to dataframe
+    temp_df = df.copy()
+    temp_df['similarity_score'] = sim_scores
+    
+    # Filter by location if specified
     if lokasi_terkini:
-        filtered = filtered[filtered["City"] == lokasi_terkini]
-
-    # Filter kategori
-    if kategori:
-        filtered = filtered[filtered["Category"] == kategori]
-
-    # Filter harga
+        temp_df = temp_df[temp_df["City"] == lokasi_terkini]
+    
+    # Filter by price if specified
     if harga:
         if harga == "Murah (<20000)":
-            filtered = filtered[filtered["Price"] < 20000]
+            temp_df = temp_df[temp_df["Price"] < 20000]
         elif harga == "Sedang (20000-50000)":
-            filtered = filtered[(filtered["Price"] >= 20000) & (filtered["Price"] <= 50000)]
+            temp_df = temp_df[(temp_df["Price"] >= 20000) & (temp_df["Price"] <= 50000)]
         elif harga == "Mahal (>50000)":
-            filtered = filtered[filtered["Price"] > 50000]
-
-    # Pastikan kolom Outdoor/Indoor tidak kosong
-    filtered = filtered[filtered["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
-
-    # Filter outdoor/indoor sesuai cuaca
+            temp_df = temp_df[temp_df["Price"] > 50000]
+    
+    # Filter by weather
     if cuaca_user:
+        temp_df = temp_df[temp_df["Outdoor/Indoor"].notna()]
         if cuaca_user in ["Cerah", "Cerah Berawan", "Berawan"]:
-            filtered = filtered[filtered["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
+            temp_df = temp_df[temp_df["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
         else:
-            filtered = filtered[filtered["Outdoor/Indoor"] == "Indoor"]
+            temp_df = temp_df[temp_df["Outdoor/Indoor"] == "Indoor"]
+    
+    # Sort by similarity score and get top N
+    temp_df = temp_df.sort_values('similarity_score', ascending=False).head(top_n)
+    
+    return temp_df
 
-    # Urutkan berdasarkan jarak ke pusat kota
-    pusat_lat, pusat_lon = None, None
-    if lokasi_terkini in LOKASI_KOORDINAT and not filtered.empty:
-        pusat_lat, pusat_lon = LOKASI_KOORDINAT[lokasi_terkini]
-    if pusat_lat is not None and pusat_lon is not None:
-        filtered["Jarak (km)"] = filtered.apply(
-            lambda row: haversine(
-                pusat_lat, pusat_lon,
-                row.get("lat_decimal", np.nan), row.get("long_decimal", np.nan)
-            ), axis=1
-        )
-        filtered = filtered.sort_values("Jarak (km)")
-    return filtered
-
-def get_hybrid_recommendations(df, username, lokasi_terkini, cuaca_user, kategori=None, harga=None):
+def get_hybrid_recommendations(df, tfidf, tfidf_matrix, username, lokasi_terkini, cuaca_user, user_text=None, harga=None):
     similar_users = get_similar_users(username)
     prefs_df = get_all_user_preferences()
     collaborative_ids = []
+    
     if similar_users:
         prefs_df = prefs_df[prefs_df['username'].isin(similar_users)]
-        # Selalu gunakan lokasi_terkini dari input user untuk filter city
+        # Always use current location from user input for city filter
         filter_lokasi = lokasi_terkini
         filter_cuaca = prefs_df['cuaca'].mode()[0] if not prefs_df['cuaca'].mode().empty else cuaca_user
-        filter_kategori = prefs_df['kategori'].mode()[0] if 'kategori' in prefs_df and not prefs_df['kategori'].mode().empty else kategori
+        filter_text = prefs_df['kategori'].mode()[0] if 'kategori' in prefs_df and not prefs_df['kategori'].mode().empty else user_text
         filter_harga = prefs_df['harga'].mode()[0] if 'harga' in prefs_df and not prefs_df['harga'].mode().empty else harga
-        collaborative = df.copy()
-        if filter_lokasi:
-            collaborative = collaborative[collaborative['City'] == filter_lokasi]
-        if filter_kategori:
-            collaborative = collaborative[collaborative["Category"] == filter_kategori]
-        if filter_harga:
-            if filter_harga == "Murah (<20000)":
-                collaborative = collaborative[collaborative["Price"] < 20000]
-            elif filter_harga == "Sedang (20000-50000)":
-                collaborative = collaborative[(collaborative["Price"] >= 20000) & (collaborative["Price"] <= 50000)]
-            elif filter_harga == "Mahal (>50000)":
-                collaborative = collaborative[collaborative["Price"] > 50000]
-        collaborative = collaborative[collaborative["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
-        if filter_cuaca:
-            if filter_cuaca in ["Cerah", "Cerah Berawan", "Berawan"]:
-                collaborative = collaborative[collaborative["Outdoor/Indoor"].isin(["Outdoor", "Indoor"])]
-            else:
-                collaborative = collaborative[collaborative["Outdoor/Indoor"] == "Indoor"]
-        collaborative_ids = collaborative['Place_Name'].tolist()
+        
+        # Get collaborative filtering results
+        collaborative = get_content_based_recommendations_by_text(
+            df, tfidf, tfidf_matrix, filter_text if filter_text else "", 
+            filter_lokasi, filter_cuaca, filter_harga
+        )
+        collaborative_ids = collaborative['Place_Name'].tolist() if not collaborative.empty else []
     else:
         collaborative = pd.DataFrame()
 
-    # Content-based: destinasi sesuai filter user saat ini
-    content_based = get_content_based_recommendations_by_filter(df, lokasi_terkini, cuaca_user, kategori, harga)
+    # Content-based: destinations based on current user filters
+    content_based = get_content_based_recommendations_by_text(
+        df, tfidf, tfidf_matrix, user_text if user_text else "", 
+        lokasi_terkini, cuaca_user, harga
+    )
     content_ids = content_based['Place_Name'].tolist() if not content_based.empty else []
 
-    # Gabungkan hasil collaborative dan content-based (prioritaskan yang muncul di kedua)
+    # Combine collaborative and content-based results (prioritize those appearing in both)
     hybrid_ids = []
     for id_ in collaborative_ids:
         if id_ in content_ids:
@@ -346,21 +395,17 @@ def get_hybrid_recommendations(df, username, lokasi_terkini, cuaca_user, kategor
         if id_ not in hybrid_ids:
             hybrid_ids.append(id_)
 
-    # Ambil data destinasi berdasarkan urutan hybrid_ids
+    # Get destination data based on hybrid_ids order
     hybrid_df = df[df['Place_Name'].isin(hybrid_ids)]
-
-    # Urutkan berdasarkan jarak ke pusat kota
-    pusat_lat, pusat_lon = None, None
-    if lokasi_terkini in LOKASI_KOORDINAT and not hybrid_df.empty:
-        pusat_lat, pusat_lon = LOKASI_KOORDINAT[lokasi_terkini]
-    if pusat_lat is not None and pusat_lon is not None and not hybrid_df.empty:
-        hybrid_df["Jarak (km)"] = hybrid_df.apply(
-            lambda row: haversine(
-                pusat_lat, pusat_lon,
-                row.get("lat_decimal", np.nan), row.get("long_decimal", np.nan)
-            ), axis=1
+    
+    # Sort by similarity if content_based has similarity scores
+    if 'similarity_score' in content_based.columns:
+        hybrid_df = hybrid_df.merge(
+            content_based[['Place_Name', 'similarity_score']], 
+            on='Place_Name', how='left'
         )
-        hybrid_df = hybrid_df.sort_values("Jarak (km)")
+        hybrid_df = hybrid_df.sort_values('similarity_score', ascending=False)
+
     return hybrid_df
 
 # --- UI Bagian Rekomendasi ---
@@ -380,7 +425,6 @@ if page == "Rekomendasi":
     st.write("Pilih preferensi Anda:")
 
     lokasi_options = [""] + CITY_OPTIONS
-    kategori_options = [""] + sorted(df["Category"].dropna().unique())
     harga_options = ["", "Murah (<20000)", "Sedang (20000-50000)", "Mahal (>50000)"]
 
     lokasi_terkini = st.selectbox(
@@ -388,11 +432,13 @@ if page == "Rekomendasi":
         options=lokasi_options,
         key="lokasi_terkini"
     )
-    kategori = st.selectbox(
-        "Kategori",
-        options=kategori_options,
-        key="kategori"
+    
+    search_text = st.text_input(
+        "Masukkan kata kunci tentang tempat wisata yang Anda cari:",
+        placeholder="Contoh: pantai, museum, sejarah, pemandangan indah, wisata alam...",
+        key="search_text"
     )
+    
     harga = st.selectbox(
         "Harga Tiket",
         options=harga_options,
@@ -418,32 +464,48 @@ if page == "Rekomendasi":
             similar_users = get_similar_users(st.session_state["username"])
             if similar_users:
                 rekomendasi_df = get_hybrid_recommendations(
-                    df_cb, st.session_state["username"], lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
+                    df_cb, tfidf, tfidf_matrix, st.session_state["username"], 
+                    lokasi_terkini, cuaca_user, search_text if search_text else None, 
+                    harga if harga else None
                 )
             else:
-                rekomendasi_df = get_content_based_recommendations_by_filter(
-                    df_cb, lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
+                rekomendasi_df = get_content_based_recommendations_by_text(
+                    df_cb, tfidf, tfidf_matrix, search_text if search_text else "", 
+                    lokasi_terkini, cuaca_user, harga if harga else None
                 )
             save_user_preference(
                 st.session_state["username"],
                 lokasi_terkini,
                 harga,
                 cuaca_user,
-                kategori
+                search_text  # Save search text instead of kategori
             )
         else:
-            rekomendasi_df = get_content_based_recommendations_by_filter(
-                df_cb, lokasi_terkini, cuaca_user, kategori if kategori else None, harga if harga else None
+            rekomendasi_df = get_content_based_recommendations_by_text(
+                df_cb, tfidf, tfidf_matrix, search_text if search_text else "", 
+                lokasi_terkini, cuaca_user, harga if harga else None
             )
 
         # Fallback: jika hasil kosong, tampilkan pesan error
         if rekomendasi_df.empty:
-            st.error("Tidak ada destinasi yang sesuai dengan filter lokasi, kategori, atau harga yang Anda pilih. Silakan coba filter lain.")
+            st.error("Tidak ada destinasi yang sesuai dengan filter lokasi, kata kunci, atau harga yang Anda pilih. Silakan coba filter lain.")
 
         if not rekomendasi_df.empty:
-            st.markdown("#### Rekomendasi Destinasi Wisata Terdekat:")
+            # Filter to only show recommendations with meaningful similarity scores
+            if 'similarity_score' in rekomendasi_df.columns:
+                # Keep only recommendations with similarity above threshold
+                filtered_rekomendasi_df = rekomendasi_df[rekomendasi_df['similarity_score'] > 0.05]
+                
+                # If we have matches after filtering, use those
+                if not filtered_rekomendasi_df.empty:
+                    rekomendasi_df = filtered_rekomendasi_df
+                    st.success(f"Ditemukan {len(rekomendasi_df)} destinasi yang cocok dengan kata kunci Anda.")
+                else:
+                    st.warning("Tidak ada destinasi yang sangat cocok dengan kata kunci Anda. Menampilkan semua hasil.")
+            
+            st.markdown("#### Rekomendasi Destinasi Wisata:")
             items = rekomendasi_df.reset_index(drop=True)
-            n_cols = 5
+            n_cols = 3  # Reduce from 5 to 3 for better readability
             for i in range(0, len(items), n_cols):
                 cols = st.columns(n_cols)
                 for j in range(n_cols):
@@ -451,19 +513,54 @@ if page == "Rekomendasi":
                     if idx < len(items):
                         row = items.iloc[idx]
                         with cols[j]:
-                            st.markdown(
-                                f"""
-                                <div style="border:1px solid #5555; border-radius:8px; padding:10px; margin-bottom:10px; background:#000000">
-                                    <b>{row['Place_Name']}</b><br>
-                                    <i>{row['City']}</i><br>
-                                    <span>Kategori: {row['Category']}</span><br>
-                                    <span>Harga: Rp{row['Price']:,.0f}</span><br>
-                                    <span>Rating: {row['Rating']}</span><br>
-                                    <span>Outdoor/Indoor: {row['Outdoor/Indoor']}</span><br>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-            st.caption(f"Menampilkan {len(rekomendasi_df)} rekomendasi di sekitar {lokasi_terkini}")
+                            # Get description if available
+                            description = ""
+                            if "Description" in row and pd.notna(row["Description"]):
+                                description = str(row["Description"])
+                            elif "combined_text" in row and pd.notna(row["combined_text"]):
+                                description = str(row["combined_text"])
+                            
+                            # Completely strip all HTML tags and special characters
+                            if description:
+                                import re
+                                # First, remove all HTML-like tags
+                                description = re.sub(r'<[^>]*>', '', description)
+                                # Then remove any special characters that might be problematic
+                                description = re.sub(r'[^\w\s.,;:!?\-]', ' ', description)
+                                # Clean up multiple spaces
+                                description = re.sub(r'\s+', ' ', description).strip()
+                                
+                            # Truncate description for display
+                            short_desc = ""
+                            if description:
+                                short_desc = (description[:100] + "...") if len(description) > 100 else description
+                            
+                            # Add similarity score if available
+                            similarity_info = ""
+                            if 'similarity_score' in row and row['similarity_score'] > 0.05:
+                                match_percent = int(min(row['similarity_score'] * 100, 100))
+                                similarity_info = f"Kecocokan: <span style='color:#4CAF50; font-weight:bold;'>{match_percent}%</span>"
+                            
+                            # Create a Streamlit card instead of HTML for more reliable rendering
+                            st.markdown(f"##### {row['Place_Name']}")
+                            st.markdown(f"*{row['City']}*")
+                            st.write(f"**Kategori:** {row['Category']}")
+                            st.write(f"**Harga:** Rp{row['Price']:,.0f}")
+                            st.write(f"**Rating:** {row['Rating']}")
+                            st.write(f"**Outdoor/Indoor:** {row['Outdoor/Indoor']}")
+                            if similarity_info:
+                                st.markdown(similarity_info, unsafe_allow_html=True)
+                            if short_desc:
+                                st.info(short_desc)
+                            
+                            # Add expander for full description
+                            if description and len(description) > 100:
+                                with st.expander("Lihat deskripsi lengkap"):
+                                    st.write(description)
+                            
+                            # Add a separator
+                            st.markdown("---")
+                            
+            st.caption(f"Menampilkan {len(rekomendasi_df)} rekomendasi di {lokasi_terkini if lokasi_terkini else 'semua lokasi'}")
         else:
             st.info("Tidak ada destinasi yang sesuai filter Anda.")
